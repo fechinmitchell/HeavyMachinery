@@ -1,13 +1,16 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { Excavator } from './Excavator';
+import { createTerrain } from './terrain';
 
 window.browser = window.browser || { runtime: {}, tabs: {}, storage: {} };
 console.log('Starting index.js');
 
+// Create scene
 const scene = new THREE.Scene();
 console.log('Scene created');
 
+// Set up physics world
 const physicsWorld = new CANNON.World();
 physicsWorld.gravity.set(0, -9.82, 0);
 physicsWorld.broadphase = new CANNON.NaiveBroadphase();
@@ -16,24 +19,17 @@ physicsWorld.defaultContactMaterial.friction = 0.5;
 physicsWorld.defaultContactMaterial.restitution = 0.1;
 console.log('Physics world initialized');
 
-const terrainSize = 20;
-const terrainGeometry = new THREE.PlaneGeometry(terrainSize, terrainSize);
-const terrainMaterial = new THREE.MeshStandardMaterial({ color: 0x33cc33 });
-const terrainMesh = new THREE.Mesh(terrainGeometry, terrainMaterial);
-terrainMesh.rotation.x = -Math.PI / 2;
-scene.add(terrainMesh);
-console.log('Flat terrain plane added (visual)');
+// Instead of adding a flat terrain plane, instantiate our realistic terrain:
+const playerPosition = new THREE.Vector3(0, 0, 0);
+const terrain = createTerrain(scene, physicsWorld, playerPosition);
+console.log('Realistic terrain created');
 
-const terrainBody = new CANNON.Body({ mass: 0, material: new CANNON.Material({ friction: 0.5, restitution: 0.1 }) });
-terrainBody.addShape(new CANNON.Plane());
-terrainBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
-physicsWorld.addBody(terrainBody);
-console.log('Terrain physics added');
-
+// Create excavator instance
 const excavator = new Excavator(scene, physicsWorld);
 excavator.baseBody.position.set(0, 0.35, 0);
 console.log('Excavator initialized');
 
+// Set up lighting
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
 scene.add(ambientLight);
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
@@ -41,11 +37,13 @@ directionalLight.position.set(5, 10, 5);
 scene.add(directionalLight);
 console.log('Lights added');
 
+// Set up camera
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(0, 5, 10);
+camera.position.set(0, 20, 50);
 camera.lookAt(0, 0, 0);
 console.log('Camera created and positioned');
 
+// Set up renderer
 const renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
 const rootElement = document.getElementById('root');
@@ -55,6 +53,7 @@ else {
   console.log('Renderer initialized:', renderer.domElement);
 }
 
+// Optional: add a control legend
 const legend = document.createElement('div');
 legend.style.position = 'absolute';
 legend.style.top = '10px';
@@ -87,8 +86,15 @@ console.log('Control legend added');
 
 function animate() {
   requestAnimationFrame(animate);
+  // Update physics world
   physicsWorld.step(1 / 60);
+
+  // Update excavator logic
   excavator.update();
+
+  // Update terrain with player's current position (if needed to generate new chunks)
+  terrain.update(playerPosition);
+
   renderer.render(scene, camera);
 }
 animate();
