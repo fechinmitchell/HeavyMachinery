@@ -320,9 +320,22 @@ export class Excavator {
             this.boomConstraint.setMotorSpeed(0); // Hold position
         }
 
-        if (this.keys.t) this.stickConstraint.setMotorSpeed(armSpeed);
-        else if (this.keys.g) this.stickConstraint.setMotorSpeed(-armSpeed);
-        else this.stickConstraint.setMotorSpeed(0);
+        // Stick control: calculate angle relative to boom's up direction
+        const stickForward = new CANNON.Vec3(0, 1, 0); // Stick's "up" direction (along Y-axis)
+        const stickForwardWorld = this.stickBody.quaternion.vmult(stickForward);
+        const boomUp = new CANNON.Vec3(0, 1, 0); // Boom's up direction (reference frame)
+        const boomUpWorld = this.boomBody.quaternion.vmult(boomUp);
+        const stickAngle = Math.acos(stickForwardWorld.dot(boomUpWorld));
+
+        // Adjusted stick control: 'g' raises (toward 170°), 't' lowers, limit to 170° from vertical
+        const maxStickAngle = 170 * Math.PI / 180; // 170° in radians (~2.967 radians)
+        if (this.keys.g && stickAngle > 0.1) { // Raise stick (increase angle, stop at 170°)
+            this.stickConstraint.setMotorSpeed(-armSpeed);
+        } else if (this.keys.t && stickAngle < maxStickAngle) { // Lower stick (toward vertical, stop near 0°)
+            this.stickConstraint.setMotorSpeed(armSpeed);
+        } else {
+            this.stickConstraint.setMotorSpeed(0); // Hold position
+        }
 
         if (this.keys.y) this.bucketConstraint.setMotorSpeed(armSpeed);
         else if (this.keys.h) this.bucketConstraint.setMotorSpeed(-armSpeed);
