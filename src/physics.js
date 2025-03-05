@@ -1,3 +1,4 @@
+// src/physics.js
 import * as CANNON from 'cannon-es';
 
 export function initPhysics() {

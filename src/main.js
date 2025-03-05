@@ -1,7 +1,8 @@
+// src/main.js
 import * as THREE from 'three';
 import { initPhysics, updatePhysics } from './physics.js';
 import { createTerrain } from './terrain.js';
-import { Excavator } from './Excavator.js'; // Fixed import casing
+import { Excavator } from './Excavator.js';
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -20,15 +21,18 @@ scene.add(directionalLight);
 // Initialize physics world
 const physicsWorld = initPhysics();
 
-// Create terrain
-const terrain = createTerrain(scene, physicsWorld);
+// Define ground material for physics interaction
+const groundMaterial = new CANNON.Material('ground');
 
-// Create excavator
-const excavator = new Excavator(scene, physicsWorld);
-excavator.body.position.set(0, 10, 0); // Start above ground
+// Create terrain
+const terrain = createTerrain(scene, physicsWorld, groundMaterial);
+
+// Create excavator with groundMaterial
+const excavator = new Excavator(scene, physicsWorld, groundMaterial);
+excavator.baseBody.position.set(0, 10, 0); // Start above ground
 
 // Camera setup
-camera.position.set(0, 15, 20);
+const cameraPosition = new CANNON.Vec3(0, 15, 20);
 camera.lookAt(0, 0, 0);
 
 // Animation loop
@@ -38,11 +42,11 @@ function animate() {
   // Update physics
   updatePhysics(physicsWorld);
 
-  // Update excavator (sync with physics and handle controls)
+  // Update excavator
   excavator.update();
 
   // Follow excavator with camera
-  const excavatorPos = excavator.mesh.position;
+  const excavatorPos = excavator.baseGroup.position;
   camera.position.set(excavatorPos.x, excavatorPos.y + 15, excavatorPos.z + 20);
   camera.lookAt(excavatorPos);
 
