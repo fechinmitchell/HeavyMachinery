@@ -10,7 +10,7 @@ export class Excavator {
         this.cubes = [];
         this.createModel();
         this.createPhysics();
-
+    
         this.keys = {
             w: false, s: false, a: false, d: false,
             q: false, e: false,
@@ -19,11 +19,11 @@ export class Excavator {
             y: false, h: false,
             space: false
         };
-
+    
         this.forwardVelocity = 0;
-        this.maxVelocity = 8; // Reduced max velocity for more control
-        this.acceleration = 0.8; // Slightly higher acceleration for responsiveness
-
+        this.maxVelocity = 8;
+        this.acceleration = 0.8;
+    
         window.addEventListener('keydown', (e) => this.onKeyDown(e));
         window.addEventListener('keyup', (e) => this.onKeyUp(e));
     }
@@ -104,8 +104,8 @@ export class Excavator {
     createPhysics() {
         const excavatorMaterial = new CANNON.Material('excavator');
         const contactMaterial = new CANNON.ContactMaterial(this.groundMaterial, excavatorMaterial, {
-            friction: 20,    // Increased friction for better grip
-            restitution: 0.1 // Lower restitution for less bounce
+            friction: 20,
+            restitution: 0.1
         });
         this.physicsWorld.addContactMaterial(contactMaterial);
 
@@ -113,8 +113,8 @@ export class Excavator {
         this.baseBody.addShape(new CANNON.Box(new CANNON.Vec3(1.0, 0.25, 2.2)));
         this.baseBody.position.set(0, 0.25, 0);
         this.baseBody.material = excavatorMaterial;
-        this.baseBody.linearDamping = 0.9;  // Increased damping to reduce sliding
-        this.baseBody.angularDamping = 0.9; // Increased to stop rotation faster
+        this.baseBody.linearDamping = 0.9;
+        this.baseBody.angularDamping = 0.9;
         this.physicsWorld.addBody(this.baseBody);
 
         this.turretBody = new CANNON.Body({ mass: 300 });
@@ -137,8 +137,9 @@ export class Excavator {
         this.boomBody.addShape(new CANNON.Box(new CANNON.Vec3(0.175, 1.5, 0.175)));
         this.boomBody.position.set(0, 3.2, 0);
         this.boomBody.material = excavatorMaterial;
-        this.physicsWorld.addBody(this.boomBody);
         this.boomBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI / -2);
+        this.boomBody.angularDamping = 0.9;
+        this.physicsWorld.addBody(this.boomBody);
 
         this.boomConstraint = new CANNON.HingeConstraint(this.turretBody, this.boomBody, {
             pivotA: new CANNON.Vec3(0, .7, -.25),
@@ -227,9 +228,9 @@ export class Excavator {
     }
 
     update() {
-        const forceMagnitude = 350000; // Slightly increased force for better push against friction
-        const turnSpeed = 2;    // Reduced turn speed for more stability
-        const damping = 0.95;   // Higher damping for quicker stopping
+        const forceMagnitude = 350000;
+        const turnSpeed = 2;
+        const damping = 0.95;
         const armSpeed = 3;
 
         const forward = new CANNON.Vec3(0, 0, -1);
@@ -249,7 +250,7 @@ export class Excavator {
 
         // Differential steering
         if (this.keys.a) {
-            leftTrackForce -= forceMagnitude * 0.4;  // Reduced differential force for stability
+            leftTrackForce -= forceMagnitude * 0.4;
             rightTrackForce += forceMagnitude * 0.4;
             this.baseBody.angularVelocity.y = turnSpeed;
         }
@@ -285,9 +286,9 @@ export class Excavator {
             this.baseBody.velocity.z *= scale;
         }
 
-        // Stability controls (tighter limits)
-        this.baseBody.angularVelocity.x = Math.max(Math.min(this.baseBody.angularVelocity.x, 0.3), -0.3); // Reduced pitch limit
-        this.baseBody.velocity.y = Math.max(this.baseBody.velocity.y, -0.05); // Tighter vertical limit
+        // Stability controls
+        this.baseBody.angularVelocity.x = Math.max(Math.min(this.baseBody.angularVelocity.x, 0.3), -0.3);
+        this.baseBody.velocity.y = Math.max(this.baseBody.velocity.y, -0.05);
 
         // Wheel rotation
         this.baseGroup.children.forEach(child => {
@@ -298,14 +299,26 @@ export class Excavator {
             }
         });
 
-        // Turret, boom, stick, bucket controls (unchanged)
+        // Turret, boom, stick, bucket controls
         if (this.keys.q) this.turretConstraint.setMotorSpeed(-armSpeed);
         else if (this.keys.e) this.turretConstraint.setMotorSpeed(armSpeed);
         else this.turretConstraint.setMotorSpeed(0);
 
-        if (this.keys.r) this.boomConstraint.setMotorSpeed(armSpeed);
-        else if (this.keys.f) this.boomConstraint.setMotorSpeed(-armSpeed);
-        else this.boomConstraint.setMotorSpeed(0);
+        // Boom control: calculate angle relative to turret's up direction
+        const boomForward = new CANNON.Vec3(0, 1, 0); // Boom's "up" direction (along Y-axis)
+        const boomForwardWorld = this.boomBody.quaternion.vmult(boomForward);
+        const turretUp = new CANNON.Vec3(0, 1, 0); // Turret's up direction
+        const turretUpWorld = this.turretBody.quaternion.vmult(turretUp);
+        const boomAngle = Math.acos(boomForwardWorld.dot(turretUpWorld));
+
+        // Adjusted boom control: 'r' raises (decreases angle), 'f' lowers (increases angle)
+        if (this.keys.r && boomAngle > Math.PI / 4) { // Raise boom (move toward vertical)
+            this.boomConstraint.setMotorSpeed(-armSpeed); // Reversed direction
+        } else if (this.keys.f && boomAngle > Math.PI / 4) { // Lower boom (move toward horizontal)
+            this.boomConstraint.setMotorSpeed(armSpeed); // Reversed direction
+        } else {
+            this.boomConstraint.setMotorSpeed(0); // Hold position
+        }
 
         if (this.keys.t) this.stickConstraint.setMotorSpeed(armSpeed);
         else if (this.keys.g) this.stickConstraint.setMotorSpeed(-armSpeed);
