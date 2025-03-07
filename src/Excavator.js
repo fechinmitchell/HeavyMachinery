@@ -113,6 +113,7 @@ export class Excavator {
         this.turretGroup.add(this.turretMesh, this.cabinMesh, this.counterweightMesh);
         this.scene.add(this.turretGroup);
 
+        // Add boom, stick, bucket as separate top-level objects
         this.scene.add(this.boomMesh);
         this.scene.add(this.stickMesh);
         this.scene.add(this.bucketMesh);
@@ -155,18 +156,21 @@ export class Excavator {
             maxForce: 1e12,
             collideConnected: true
         });
+        // Enable motor to hold position, even if speed is 0
         this.turretConstraint.enableMotor();
         this.turretConstraint.motorEquation.maxForce = 1e5;
         this.physicsWorld.addConstraint(this.turretConstraint);
 
         // --- Improved Arm Physics ---
-
         // Boom body
         this.boomBody = new CANNON.Body({ mass: 50, material: excavatorMaterial });
         this.boomBody.addShape(new CANNON.Box(new CANNON.Vec3(0.175, 1.5, 0.175)));
         this.boomBody.addShape(new CANNON.Box(new CANNON.Vec3(0.35, 0.025, 0.05)), new CANNON.Vec3(0, 1.525, 0));
+        // Position the boom so that it sits ~45° from horizontal
         this.boomBody.position.set(0, 3.2, 0);
-        this.boomBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI / -4);
+        // Set boom initial rotation ~ -45° (PI/4) around X
+        this.boomBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 4);
+
         this.boomBody.linearDamping = 0.1;
         this.boomBody.angularDamping = 0.5;
         this.physicsWorld.addBody(this.boomBody);
@@ -183,6 +187,8 @@ export class Excavator {
         this.boomConstraint.enableMotor();
         this.boomConstraint.motorEquation.maxForce = 1e5;
         this.physicsWorld.addConstraint(this.boomConstraint);
+
+        // Increase constraint stiffness/relaxation
         const stiffness = 1e9, relaxation = 2, timeStep = 1 / 60;
         this.boomConstraint.rotationalEquation1.setSpookParams(stiffness, relaxation, timeStep);
         this.boomConstraint.rotationalEquation2.setSpookParams(stiffness, relaxation, timeStep);
@@ -190,8 +196,10 @@ export class Excavator {
         // Stick body
         this.stickBody = new CANNON.Body({ mass: 30, material: excavatorMaterial });
         this.stickBody.addShape(new CANNON.Box(new CANNON.Vec3(0.15, 1.5, 0.15)));
-        this.stickBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI / -6);
+        // Set stick rotation ~ -45° from the boom around X
         this.stickBody.position.set(0, 5.45, 0);
+        this.stickBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 4);
+
         this.stickBody.linearDamping = 0.1;
         this.stickBody.angularDamping = 0.5;
         this.physicsWorld.addBody(this.stickBody);
@@ -231,6 +239,7 @@ export class Excavator {
             faces: bucketFaces
         }));
         this.bucketBody.position.set(0, 6.55, 0);
+        // Keep bucket neutral rotation (or tweak as desired)
         this.bucketBody.linearDamping = 0.1;
         this.bucketBody.angularDamping = 0.5;
         this.physicsWorld.addBody(this.bucketBody);
@@ -369,6 +378,7 @@ export class Excavator {
         const leftOffset = this.baseBody.quaternion.vmult(new CANNON.Vec3(-0.9, 0, 0));
         const rightOffset = this.baseBody.quaternion.vmult(new CANNON.Vec3(0.9, 0, 0));
 
+        // Apply forces to simulate track push
         this.baseBody.applyForce(leftForce, this.baseBody.position.vadd(leftOffset));
         this.baseBody.applyForce(rightForce, this.baseBody.position.vadd(rightOffset));
 
@@ -383,9 +393,10 @@ export class Excavator {
         }
 
         this.baseBody.angularVelocity.x = Math.max(Math.min(this.baseBody.angularVelocity.x, 0.3), -0.3);
-        // Optionally, lock vertical velocity so the excavator stays on the ground.
+        // Lock vertical velocity so the excavator stays on the ground.
         this.baseBody.velocity.y = 0;
 
+        // Animate wheels
         this.baseGroup.children.forEach(child => {
             if (child.geometry instanceof THREE.CylinderGeometry) {
                 const isLeftWheel = child.position.x < 0;
@@ -394,46 +405,41 @@ export class Excavator {
             }
         });
 
-        // Joint Motor Controls
-        if (this.keys.q) this.turretConstraint.setMotorSpeed(-armSpeed);
-        else if (this.keys.e) this.turretConstraint.setMotorSpeed(armSpeed);
-        else this.turretConstraint.setMotorSpeed(0);
+        // -------------------
+        // JOINT MOTOR CONTROLS
+        // -------------------
+        // TURRET
+        if (this.keys.q) {
+            this.turretConstraint.setMotorSpeed(-armSpeed);
+        } else if (this.keys.e) {
+            this.turretConstraint.setMotorSpeed(armSpeed);
+        } else {
+            // Keep motor on but zero speed to hold position
+            this.turretConstraint.setMotorSpeed(0);
+        }
 
+        // BOOM
         if (this.keys.r) {
             this.boomConstraint.setMotorSpeed(-armSpeed);
         } else if (this.keys.f) {
             this.boomConstraint.setMotorSpeed(armSpeed);
         } else {
             this.boomConstraint.setMotorSpeed(0);
+            // Zero out any existing angular velocity to lock the boom in place
             this.boomBody.angularVelocity.set(0, 0, 0);
         }
 
-        // For the stick hinge, apply a proportional controller to limit rotation.
+        // STICK
         if (this.keys.g) {
             this.stickConstraint.setMotorSpeed(-armSpeed);
         } else if (this.keys.t) {
             this.stickConstraint.setMotorSpeed(armSpeed);
         } else {
-            let boomInv = this.boomBody.quaternion.clone();
-            boomInv.conjugate();
-            let relQuat = boomInv.mult(this.stickBody.quaternion);
-            let currentAngle = 2 * Math.atan2(relQuat.x, relQuat.w);
-            const minAngle = -0.0873;
-            const maxAngle = 0.0873;
-            let error = 0;
-            if (currentAngle > maxAngle) {
-                error = currentAngle - maxAngle;
-            } else if (currentAngle < minAngle) {
-                error = currentAngle - minAngle;
-            }
-            const kP = 0.1;
-            let correctiveSpeed = -kP * error;
-            if (Math.abs(error) < 0.01) {
-                correctiveSpeed = 0;
-            }
-            this.stickConstraint.setMotorSpeed(correctiveSpeed);
+            this.stickConstraint.setMotorSpeed(0);
+            this.stickBody.angularVelocity.set(0, 0, 0);
         }
 
+        // BUCKET
         if (this.keys.y) {
             this.bucketConstraint.setMotorSpeed(armSpeed);
         } else if (this.keys.h) {
@@ -443,15 +449,22 @@ export class Excavator {
             this.bucketBody.angularVelocity.set(0, 0, 0);
         }
 
-        // Manual Angle Limits for other joints
+        // -------------
+        // CLAMP ANGLES
+        // -------------
+        // Turret
         this.clampHingeAngleAroundY(this.turretBody, this.baseBody, -Math.PI, Math.PI);
+        // Boom
         this.clampHingeAngleAroundX(this.boomBody, this.turretBody, -Math.PI / 4, Math.PI / 3);
+        // Bucket
         this.clampHingeAngleAroundX(this.bucketBody, this.stickBody, -Math.PI / 4, Math.PI / 2);
 
+        // Dig
         if (this.keys.space) {
             this.dig();
         }
 
+        // Handle any attached cubes
         this.attachedCubes.forEach(cube => {
             const localPos = cube.localPosition;
             const worldPos = this.bucketBody.position.clone().vadd(
@@ -469,6 +482,7 @@ export class Excavator {
             }
         });
 
+        // Update Three.js mesh transformations
         this.baseGroup.position.copy(this.baseBody.position);
         this.baseGroup.quaternion.copy(this.baseBody.quaternion);
         this.turretGroup.position.copy(this.turretBody.position);
@@ -497,6 +511,7 @@ export class Excavator {
                 break;
             }
         }
+        // Release if 'r' is pressed again while holding cubes, for instance
         if (this.keys.r && this.attachedCubes.length > 0) {
             console.log(`Releasing ${this.attachedCubes.length} cubes`);
             this.attachedCubes.forEach(cube => {
@@ -507,4 +522,3 @@ export class Excavator {
         }
     }
 }
-
