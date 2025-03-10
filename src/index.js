@@ -6,6 +6,7 @@ import { initPhysics, updatePhysics } from './physics.js';
 import { createTerrain } from './terrain.js';
 import { Excavator } from './Excavator.js';
 import { DumpTruck } from './DumpTruck.js';
+import { SnowPlow } from './SnowPlow.js';  // Your new SnowPlow class
 import { Block } from './Block.js';
 
 // So we don't get browser-undefined errors in some environments
@@ -33,11 +34,16 @@ const groundMaterial = new CANNON.Material('ground');
 createTerrain(scene, physicsWorld, groundMaterial);
 
 // 5. Create Vehicles and position them side by side.
+// Positioning: excavator is left at x = -3, dump truck is right at x = 3.
+// We'll add the snow plow on the other side of the dump truck at x = 9
 const excavator = new Excavator(scene, physicsWorld, groundMaterial);
-excavator.baseBody.position.set(-3, 0.35, 0); // Positioned to the left
+excavator.baseBody.position.set(-3, 0.35, 0); // Left side
 
 const dumpTruck = new DumpTruck(scene, physicsWorld, groundMaterial);
-dumpTruck.baseBody.position.set(3, 0.35, 0); // Positioned to the right
+dumpTruck.baseBody.position.set(3, 0.35, 0); // Center-right
+
+const snowPlow = new SnowPlow(scene, physicsWorld, groundMaterial);
+snowPlow.baseBody.position.set(9, 0.35, 0); // Further right (same offset as between excavator and dump truck)
 
 // Set the active vehicle (default to excavator).
 window.activeVehicle = excavator;
@@ -64,6 +70,49 @@ if (!rootElement) {
 }
 
 // 9. On-screen Controls Legend.
+const excavatorLegend = `
+  <h3>Excavator Controls</h3>
+  <p><strong>Press 1 to switch to Excavator</strong></p>
+  <ul style="list-style: none; padding: 0;">
+    <li><strong>W</strong>: Move Forward</li>
+    <li><strong>S</strong>: Move Backward</li>
+    <li><strong>A</strong>: Turn Left</li>
+    <li><strong>D</strong>: Turn Right</li>
+    <li><strong>Q</strong>: Rotate Turret Left</li>
+    <li><strong>E</strong>: Rotate Turret Right</li>
+    <li><strong>R</strong>: Raise Boom / Release Cubes</li>
+    <li><strong>F</strong>: Lower Boom</li>
+    <li><strong>T</strong>: Extend Stick</li>
+    <li><strong>G</strong>: Retract Stick</li>
+    <li><strong>Y</strong>: Curl Bucket In</li>
+    <li><strong>H</strong>: Curl Bucket Out</li>
+    <li><strong>Space</strong>: Pick Up Cubes</li>
+  </ul>
+`;
+
+const dumpTruckLegend = `
+  <h3>Dump Truck Controls</h3>
+  <p><strong>Press 2 to switch to Dump Truck</strong></p>
+  <ul style="list-style: none; padding: 0;">
+    <li><strong>Arrow Up</strong>: Move Forward</li>
+    <li><strong>Arrow Down</strong>: Move Backward</li>
+    <li><strong>Arrow Left</strong>: Turn Left</li>
+    <li><strong>Arrow Right</strong>: Turn Right</li>
+  </ul>
+`;
+
+const snowPlowLegend = `
+  <h3>Snow Plow Controls</h3>
+  <p><strong>Press 3 to switch to Snow Plow</strong></p>
+  <ul style="list-style: none; padding: 0;">
+    <li><strong>W</strong>: Move Forward</li>
+    <li><strong>S</strong>: Move Backward</li>
+    <li><strong>A</strong>: Turn Left</li>
+    <li><strong>D</strong>: Turn Right</li>
+    <li><strong>Z</strong>: Raise Plow</li>
+    <li><strong>X</strong>: Lower Plow</li>
+  </ul>
+`;
 const legend = document.createElement('div');
 legend.style.position = 'absolute';
 legend.style.top = '10px';
@@ -73,21 +122,8 @@ legend.style.color = 'white';
 legend.style.padding = '10px';
 legend.style.fontFamily = 'Arial, sans-serif';
 legend.style.fontSize = '14px';
-
-legend.innerHTML = `
-  <h3>Vehicle Controls</h3>
-  <p>
-    <strong>1</strong>: Control Excavator (W, A, S, D, Q, E, R, F, T, G, Y, H, Space)<br>
-    <strong>2</strong>: Control Dump Truck (Arrow Up, Arrow Down, Arrow Left, Arrow Right)
-  </p>
-  <ul style="list-style: none; padding: 0;">
-    <!-- Camera Controls -->
-    <li><strong>I</strong>: Zoom In (Camera)</li>
-    <li><strong>K</strong>: Zoom Out (Camera)</li>
-    <li><strong>J</strong>: Orbit Left (Camera)</li>
-    <li><strong>L</strong>: Orbit Right (Camera)</li>
-  </ul>
-`;
+// Initially show the excavator legend.
+legend.innerHTML = excavatorLegend;
 document.body.appendChild(legend);
 
 // 10. Extra Camera Controls.
@@ -99,14 +135,18 @@ const zoomSpeed = 0.1;
 const orbitSpeed = 0.02;
 
 window.addEventListener('keydown', (event) => {
-  // Switch active vehicle when pressing 1 or 2.
+  // Switch active vehicle with keys 1, 2, or 3.
   if (event.key === '1') {
     window.activeVehicle = excavator;
-    console.log("Active vehicle: Excavator");
+    legend.innerHTML = excavatorLegend;
     return;
   } else if (event.key === '2') {
     window.activeVehicle = dumpTruck;
-    console.log("Active vehicle: Dump Truck");
+    legend.innerHTML = dumpTruckLegend;
+    return;
+  } else if (event.key === '3') {
+    window.activeVehicle = snowPlow;
+    legend.innerHTML = snowPlowLegend;
     return;
   }
   // Camera controls.
@@ -137,13 +177,14 @@ function animate() {
   // Update physics simulation.
   updatePhysics(physicsWorld);
 
-  // Update both vehicles (each only processes input if active).
+  // Update each vehicle.
   excavator.update();
   dumpTruck.update();
+  snowPlow.update();
   // Update the block.
   block.update();
 
-  // --- Camera control logic ---
+  // Camera control logic.
   if (camKeys.i) {
     cameraDistance = Math.max(2, cameraDistance - zoomSpeed);
   }
