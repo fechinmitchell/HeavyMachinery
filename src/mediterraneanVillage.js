@@ -1,8 +1,34 @@
 // mediterraneanVillage.js
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { Water } from 'three/examples/jsm/objects/Water.js';
 
+// =====================================================
+// CUSTOM WATER (Shader-based, non-reflective)
+// =====================================================
+const waterVertexShader = /* glsl */ `
+  uniform float time;
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    vec3 pos = position;
+    // Wave displacement:
+    pos.z += sin(pos.x * 0.1 + time) * 1.0;
+    pos.z += sin(pos.y * 0.1 + time * 1.5) * 1.0;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+  }
+`;
+
+const waterFragmentShader = /* glsl */ `
+  varying vec2 vUv;
+  void main() {
+    // Solid water color (tweak as desired)
+    gl_FragColor = vec4(0.0, 0.5, 0.8, 1.0);
+  }
+`;
+
+// =====================================================
+// MAIN VILLAGE CREATION
+// =====================================================
 export function createMediterraneanVillage(scene, physicsWorld, groundMaterial, getHeight, patchSize, origin) {
   console.log('Creating Mediterranean Village at:', origin);
   
@@ -27,7 +53,7 @@ export function createMediterraneanVillage(scene, physicsWorld, groundMaterial, 
     bridgeRoad: new THREE.MeshStandardMaterial({ color: 0x333333 })
   };
   
-  // Create terrain and water with realistic water and gentle slopes.
+  // Create terrain and water with gentle slopes.
   createTerrainWithWater(scene, physicsWorld, groundMaterial, patchSize, origin, materials);
   
   // Add houses.
@@ -39,6 +65,9 @@ export function createMediterraneanVillage(scene, physicsWorld, groundMaterial, 
   // Add vegetation (olive trees, cypress trees, etc.).
   addVegetation(scene, physicsWorld, patchSize, origin, materials);
   
+  // Create a stone wall with arched openings around the village.
+  createVillageWall(scene, patchSize, origin, materials);
+  
   // Create bridge connection point for this village
   const bridgeStartPoint = createBridgeConnection(scene, physicsWorld, groundMaterial, patchSize, origin, materials);
 
@@ -48,36 +77,32 @@ export function createMediterraneanVillage(scene, physicsWorld, groundMaterial, 
   };
 }
 
+// =====================================================
+// TERRAIN & WATER CREATION (Custom Shader Water)
+// =====================================================
 function createTerrainWithWater(scene, physicsWorld, groundMaterial, patchSize, origin, materials) {
   const seaLevel = -1.5;
   const seaSize = patchSize * 1.5;
-
-  // Create realistic water using THREE.Water with improved settings
-  const waterGeometry = new THREE.PlaneGeometry(seaSize, seaSize);
-  const water = new Water(waterGeometry, {
-    textureWidth: 1024, // Higher resolution for better detail
-    textureHeight: 1024,
-    waterNormals: new THREE.TextureLoader().load('textures/waternormals.jpg', function(texture) {
-      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-      texture.repeat.set(8, 8); // Increase repeats for more detail
-    }),
-    sunDirection: new THREE.Vector3(1, 1, 1).normalize(),
-    sunColor: 0xffffff,
-    waterColor: 0x1a75ff,
-    distortionScale: 3.7,
-    fog: scene.fog !== undefined,
-    alpha: 0.8 // Transparency for shallow water effect
+  
+  // Create water using a custom shader material (non-reflective)
+  const waterGeometry = new THREE.PlaneGeometry(seaSize, seaSize, 128, 128);
+  const waterMaterial = new THREE.ShaderMaterial({
+    uniforms: { time: { value: 0.0 } },
+    vertexShader: waterVertexShader,
+    fragmentShader: waterFragmentShader,
+    transparent: false
   });
+  const water = new THREE.Mesh(waterGeometry, waterMaterial);
   water.rotation.x = -Math.PI / 2;
   water.position.set(origin.x + patchSize / 2, seaLevel, origin.z + patchSize / 2);
   scene.add(water);
-
-  // Add foam/wave effect at shoreline
+  // (Remember: In your animation loop update waterMaterial.uniforms.time.value)
+  
+  // Shoreline foam effect
   const shorelineGeometry = new THREE.RingGeometry(
-    patchSize * 0.4 - 0.5, // Inner radius slightly smaller than island
-    patchSize * 0.4 + 0.5, // Outer radius slightly larger than island
-    64, 
-    1
+    patchSize * 0.4 - 0.5,
+    patchSize * 0.4 + 0.5,
+    64, 1
   );
   shorelineGeometry.rotateX(-Math.PI / 2);
   const shorelineMaterial = new THREE.MeshStandardMaterial({
@@ -89,8 +114,8 @@ function createTerrainWithWater(scene, physicsWorld, groundMaterial, patchSize, 
   const shorelineMesh = new THREE.Mesh(shorelineGeometry, shorelineMaterial);
   shorelineMesh.position.set(origin.x + patchSize / 2, seaLevel + 0.05, origin.z + patchSize / 2);
   scene.add(shorelineMesh);
-
-  // Create an invisible physics body for the water.
+  
+  // Invisible water physics body
   const seaDepth = 15;
   const waterShape = new CANNON.Box(new CANNON.Vec3(seaSize / 2, seaDepth / 2, seaSize / 2));
   const waterBody = new CANNON.Body({
@@ -99,91 +124,69 @@ function createTerrainWithWater(scene, physicsWorld, groundMaterial, patchSize, 
     shape: waterShape,
     material: groundMaterial
   });
-  
-  // Add water physics properties for machinery
   waterBody.collisionResponse = 1;
   waterBody.userData = { isWater: true };
-  
   physicsWorld.addBody(waterBody);
   
-  // Create the main island with gentle slopes.
+  // Create island terrain
   createSlopedIsland(scene, physicsWorld, groundMaterial, patchSize, origin, materials, seaLevel);
 }
 
+// =====================================================
+// ISLAND & PENINSULA
+// =====================================================
 function createSlopedIsland(scene, physicsWorld, groundMaterial, patchSize, origin, materials, seaLevel) {
   const islandRadius = patchSize * 0.4;
   const segments = 64;
   const maxHeight = 1.5;
   
-  // Create a circular geometry with more segments for smoother slopes
   const geometry = new THREE.CircleGeometry(islandRadius, segments);
   geometry.rotateX(-Math.PI / 2);
   
-  // Modify vertex heights to form a gentle slope:
-  // Create smoother, more gradual slopes that machinery can traverse
   const positionAttr = geometry.attributes.position;
   for (let i = 0; i < positionAttr.count; i++) {
     const x = positionAttr.getX(i);
     const z = positionAttr.getZ(i);
     const dist = Math.sqrt(x * x + z * z);
-    
-    // Use a smoother height curve (quadratic instead of linear)
-    // This creates a more gradual slope at the edges
     const heightRatio = 1 - (dist / islandRadius);
     const height = maxHeight * heightRatio * heightRatio;
-    
     positionAttr.setY(i, height);
   }
   geometry.computeVertexNormals();
   
   const islandMesh = new THREE.Mesh(geometry, materials.sand);
-  // Position the island so its base aligns with seaLevel.
   islandMesh.position.set(origin.x + patchSize / 2, seaLevel, origin.z + patchSize / 2);
   scene.add(islandMesh);
   
-  // Use a heightfield for better physics representation of the sloped terrain
-  const heightfieldSize = 32; // Must be a power of 2 + 1
+  // Heightfield for physics
+  const heightfieldSize = 32;
   const heightfieldData = [];
-  
-  // Create a height array for the heightfield
   for (let i = 0; i < heightfieldSize; i++) {
     heightfieldData[i] = [];
     for (let j = 0; j < heightfieldSize; j++) {
-      // Calculate normalized position on the island
       const nx = (i / (heightfieldSize - 1) - 0.5) * 2;
       const nz = (j / (heightfieldSize - 1) - 0.5) * 2;
-      
-      // Calculate distance from center (0-1)
       const dist = Math.min(1, Math.sqrt(nx * nx + nz * nz));
-      
-      // Use same quadratic function for smooth slope
       const heightRatio = 1 - dist;
       const height = maxHeight * heightRatio * heightRatio;
-      
       heightfieldData[i][j] = height;
     }
   }
-  
-  // Create heightfield shape
   const heightfieldShape = new CANNON.Heightfield(heightfieldData, {
     elementSize: (islandRadius * 2) / (heightfieldSize - 1)
   });
-  
   const heightfieldBody = new CANNON.Body({
     mass: 0,
     position: new CANNON.Vec3(
-      origin.x + patchSize / 2 - islandRadius, 
-      seaLevel, 
+      origin.x + patchSize / 2 - islandRadius,
+      seaLevel,
       origin.z + patchSize / 2 - islandRadius
     ),
     material: groundMaterial
   });
-  
-  // Rotate the heightfield to the correct orientation
   heightfieldBody.addShape(heightfieldShape);
   physicsWorld.addBody(heightfieldBody);
   
-  // Create a peninsula extending from the island for roads with gentle slopes for machinery
   createPeninsula(scene, physicsWorld, groundMaterial, patchSize, origin, materials, seaLevel, maxHeight, islandRadius);
 }
 
@@ -191,63 +194,39 @@ function createPeninsula(scene, physicsWorld, groundMaterial, patchSize, origin,
   const peninsulaWidth = patchSize * 0.2;
   const peninsulaLength = patchSize * 0.5;
   
-  // Create a custom geometry for the peninsula with gentle slopes
   const detailSegments = 20;
-  const peninsulaGeometry = new THREE.PlaneGeometry(
-    peninsulaWidth, 
-    peninsulaLength, 
-    detailSegments - 1, 
-    detailSegments - 1
-  );
+  const peninsulaGeometry = new THREE.PlaneGeometry(peninsulaWidth, peninsulaLength, detailSegments - 1, detailSegments - 1);
   peninsulaGeometry.rotateX(-Math.PI / 2);
   
-  // Modify the geometry to create a gentle slope
   const positionAttr = peninsulaGeometry.attributes.position;
   for (let i = 0; i < positionAttr.count; i++) {
     const y = positionAttr.getY(i);
-    
-    // Normalize the position along the length (0 at start, 1 at end)
     const lengthRatio = (y + peninsulaLength / 2) / peninsulaLength;
-    
-    // Create a smooth slope from the island to the water
     let height;
     if (lengthRatio < 0.2) {
-      // Near the island, maintain island height
       height = landHeight * 0.8;
     } else if (lengthRatio > 0.9) {
-      // Near the water, gradually reach sea level
       height = seaLevel + 0.1;
     } else {
-      // Smooth transition in between
       const t = (lengthRatio - 0.2) / 0.7;
       height = landHeight * 0.8 * (1 - t) + (seaLevel + 0.1) * t;
     }
-    
     positionAttr.setZ(i, height);
   }
   peninsulaGeometry.computeVertexNormals();
   
   const peninsulaMesh = new THREE.Mesh(peninsulaGeometry, materials.sand);
-  
-  const islandCenter = new THREE.Vector3(origin.x + patchSize / 2, 0, origin.z + patchSize / 2);
-  peninsulaMesh.position.set(
-    islandCenter.x,
-    0,
-    islandCenter.z - (islandRadius + peninsulaLength / 2)
-  );
+  const islandCenter = new THREE.Vector2(origin.x + patchSize / 2, origin.z + patchSize / 2);
+  peninsulaMesh.position.set(islandCenter.x, 0, islandCenter.y - (islandRadius + peninsulaLength / 2));
   scene.add(peninsulaMesh);
   
-  // Create heightfield for peninsula physics
+  // Physics for peninsula
   const heightfieldSize = 32;
   const heightfieldData = [];
-  
   for (let i = 0; i < heightfieldSize; i++) {
     heightfieldData[i] = [];
     for (let j = 0; j < heightfieldSize; j++) {
-      // Normalize position on peninsula (0-1)
       const lengthRatio = j / (heightfieldSize - 1);
-      
-      // Use same slope function as visual geometry
       let height;
       if (lengthRatio < 0.2) {
         height = landHeight * 0.8;
@@ -257,43 +236,113 @@ function createPeninsula(scene, physicsWorld, groundMaterial, patchSize, origin,
         const t = (lengthRatio - 0.2) / 0.7;
         height = landHeight * 0.8 * (1 - t) + (seaLevel + 0.1) * t;
       }
-      
       heightfieldData[i][j] = height - seaLevel;
     }
   }
-  
   const peninsulaShape = new CANNON.Heightfield(heightfieldData, {
     elementSize: peninsulaLength / (heightfieldSize - 1)
   });
-  
   const peninsulaBody = new CANNON.Body({
     mass: 0,
     position: new CANNON.Vec3(
       islandCenter.x - peninsulaWidth / 2,
       seaLevel,
-      islandCenter.z - islandRadius - peninsulaLength
+      islandCenter.y - islandRadius - peninsulaLength
     ),
     material: groundMaterial
   });
-  
   peninsulaBody.addShape(peninsulaShape);
   physicsWorld.addBody(peninsulaBody);
   
   return {
-    startPoint: new THREE.Vector3(
-      islandCenter.x,
-      seaLevel + 0.1,
-      islandCenter.z - islandRadius - peninsulaLength
-    )
+    startPoint: new THREE.Vector3(islandCenter.x, seaLevel + 0.1, islandCenter.y - islandRadius - peninsulaLength)
   };
 }
+
+// =====================================================
+// VILLAGE WALL WITH ARCHES
+// =====================================================
+function createVillageWall(scene, patchSize, origin, materials) {
+  // Wall will encircle the island.
+  const center = new THREE.Vector2(origin.x + patchSize / 2, origin.z + patchSize / 2);
+  const islandRadius = patchSize * 0.4;
+  const wallRadius = islandRadius + 2; // 2 units outside the island
+  const wallThickness = 0.5;
+  const wallHeight = 3;
+  const outerRadius = wallRadius + wallThickness;
+  const innerRadius = wallRadius - wallThickness;
+  
+  // Create the outer and inner boundaries.
+  const wallShape = new THREE.Shape();
+  wallShape.absarc(center.x, center.y, outerRadius, 0, Math.PI * 2, true);
+  const innerCircle = new THREE.Path();
+  innerCircle.absarc(center.x, center.y, innerRadius, 0, Math.PI * 2, false);
+  wallShape.holes.push(innerCircle);
+  
+  // Create three arch openings evenly spaced along the wall.
+  const archCount = 3;
+  const archWidth = 3;
+  const archHeight = 2.5;
+  for (let i = 0; i < archCount; i++) {
+    const angle = (i * 2 * Math.PI) / archCount;
+    // Arch center along the wall:
+    const archCenter = new THREE.Vector2(
+      center.x + wallRadius * Math.cos(angle),
+      center.y + wallRadius * Math.sin(angle)
+    );
+    // Build an arch shape (rectangle with a semicircular top) in 2D.
+    const archShape = new THREE.Shape();
+    archShape.moveTo(-archWidth / 2, 0);
+    archShape.lineTo(-archWidth / 2, archHeight - archWidth / 2);
+    archShape.absarc(0, archHeight - archWidth / 2, archWidth / 2, Math.PI, 0, false);
+    archShape.lineTo(archWidth / 2, 0);
+    archShape.lineTo(-archWidth / 2, 0);
+    
+    // Transform archShape: since THREE.Shape does not support applyMatrix4,
+    // we extract its points, apply a 2D matrix transformation, and rebuild the shape.
+    const pts = archShape.getPoints();
+    // Create a 2D transformation matrix (Matrix3) that rotates and translates.
+    const m = new THREE.Matrix3();
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+    // Set the matrix as:
+    // [ cosA, -sinA, archCenter.x ]
+    // [ sinA,  cosA, archCenter.y ]
+    // [ 0,      0,         1     ]
+    m.set(
+      cosA, -sinA, archCenter.x,
+      sinA,  cosA, archCenter.y,
+      0,     0,    1
+    );
+    for (let j = 0; j < pts.length; j++) {
+      pts[j].applyMatrix3(m);
+    }
+    const transformedArch = new THREE.Shape(pts);
+    wallShape.holes.push(transformedArch);
+  }
+  
+  const extrudeSettings = {
+    steps: 1,
+    depth: wallHeight,
+    bevelEnabled: false
+  };
+  const wallGeometry = new THREE.ExtrudeGeometry(wallShape, extrudeSettings);
+  wallGeometry.rotateX(-Math.PI / 2);
+  
+  const wallMesh = new THREE.Mesh(wallGeometry, materials.rockWall);
+  wallMesh.position.y = origin.y + 1.5;
+  scene.add(wallMesh);
+}
+
+// =====================================================
+// HOUSES, ROADS, VEGETATION, & TREES (Unchanged)
+// =====================================================
 
 function createMediterraneanHouses(scene, physicsWorld, patchSize, origin, materials) {
   const islandCenter = new THREE.Vector3(origin.x + patchSize / 2, 0, origin.z + patchSize / 2);
   const islandRadius = patchSize * 0.3;
   const houseCount = 8;
   const housePositions = [];
-  
   for (let i = 0; i < houseCount; i++) {
     const angle = (Math.PI * 2 * i) / houseCount;
     const distance = islandRadius * 0.6 * (0.6 + Math.random() * 0.3);
@@ -301,7 +350,6 @@ function createMediterraneanHouses(scene, physicsWorld, patchSize, origin, mater
     const z = islandCenter.z + Math.sin(angle) * distance;
     housePositions.push({ x, z, rotation: angle + Math.PI + (Math.random() * Math.PI / 4 - Math.PI / 8) });
   }
-  
   housePositions.forEach(pos => {
     createMediterraneanHouse(scene, physicsWorld, pos.x, pos.z, pos.rotation, materials);
   });
@@ -357,7 +405,6 @@ function addHouseDetails(scene, x, z, baseY, baseWidth, baseDepth, baseHeight, r
     const relZ = z + Math.sin(rotation) * xOffset + Math.cos(rotation) * zOffset;
     return { x: relX, z: relZ };
   };
-  
   const doorWidth = 0.8;
   const doorHeight = 1.8;
   const doorPos = placeRelativeToHouse(0, baseDepth / 2 + 0.01);
@@ -379,7 +426,6 @@ function addHouseDetails(scene, x, z, baseY, baseWidth, baseDepth, baseHeight, r
     { x: baseWidth / 2 + 0.01, z: 0, rotationOffset: Math.PI / 2 },
     { x: -baseWidth / 2 - 0.01, z: 0, rotationOffset: -Math.PI / 2 }
   ];
-  
   windowPositions.forEach(pos => {
     const windowPos = placeRelativeToHouse(pos.x, pos.z);
     const windowGeometry = new THREE.PlaneGeometry(windowSize, windowSize);
@@ -401,24 +447,15 @@ function createConnectingRoads(scene, physicsWorld, groundMaterial, patchSize, o
   const islandRadius = patchSize * 0.3;
   
   const roadWidth = 4;
-  
   const mainRoadLength = patchSize * 0.6;
   const mainRoadGeometry = new THREE.PlaneGeometry(roadWidth, mainRoadLength);
   const mainRoadMesh = new THREE.Mesh(mainRoadGeometry, materials.road);
   mainRoadMesh.rotation.x = -Math.PI / 2;
-  mainRoadMesh.position.set(
-    islandCenter.x,
-    0.15,
-    islandCenter.z - mainRoadLength / 2
-  );
+  mainRoadMesh.position.set(islandCenter.x, 0.15, islandCenter.z - mainRoadLength / 2);
   scene.add(mainRoadMesh);
   
   const circularRoadRadius = islandRadius * 0.7;
-  const circularRoadGeometry = new THREE.RingGeometry(
-    circularRoadRadius - roadWidth / 2,
-    circularRoadRadius + roadWidth / 2,
-    32
-  );
+  const circularRoadGeometry = new THREE.RingGeometry(circularRoadRadius - roadWidth / 2, circularRoadRadius + roadWidth / 2, 32);
   const circularRoadMesh = new THREE.Mesh(circularRoadGeometry, materials.road);
   circularRoadMesh.rotation.x = -Math.PI / 2;
   circularRoadMesh.position.set(islandCenter.x, 0.16, islandCenter.z);
@@ -429,20 +466,14 @@ function createConnectingRoads(scene, physicsWorld, groundMaterial, patchSize, o
     const angle = (Math.PI * 2 * i) / connectorCount;
     const innerX = islandCenter.x + Math.cos(angle) * (circularRoadRadius - roadWidth / 2);
     const innerZ = islandCenter.z + Math.sin(angle) * (circularRoadRadius - roadWidth / 2);
-    
     const outerX = islandCenter.x + Math.cos(angle) * islandRadius;
     const outerZ = islandCenter.z + Math.sin(angle) * islandRadius;
-    
     const connectorLength = Math.sqrt(Math.pow(outerX - innerX, 2) + Math.pow(outerZ - innerZ, 2));
     const connectorGeometry = new THREE.PlaneGeometry(roadWidth / 2, connectorLength);
     const connectorMesh = new THREE.Mesh(connectorGeometry, materials.road);
     connectorMesh.rotation.x = -Math.PI / 2;
     connectorMesh.rotation.z = angle;
-    connectorMesh.position.set(
-      (innerX + outerX) / 2,
-      0.17,
-      (innerZ + outerZ) / 2
-    );
+    connectorMesh.position.set((innerX + outerX) / 2, 0.17, (innerZ + outerZ) / 2);
     scene.add(connectorMesh);
   }
 }
@@ -452,13 +483,11 @@ function addVegetation(scene, physicsWorld, patchSize, origin, materials) {
   const islandRadius = patchSize * 0.35;
   
   const treeCount = 20;
-  
   for (let i = 0; i < treeCount; i++) {
     const angle = Math.random() * Math.PI * 2;
     const distance = Math.random() * islandRadius * 0.9;
     const x = islandCenter.x + Math.cos(angle) * distance;
     const z = islandCenter.z + Math.sin(angle) * distance;
-    
     if (Math.random() > 0.5) {
       createOliveTree(scene, physicsWorld, x, z, materials);
     } else {
@@ -471,7 +500,6 @@ function addVegetation(scene, physicsWorld, patchSize, origin, materials) {
     const distance = islandRadius + 5 + i * 4;
     const x = islandCenter.x + offset;
     const z = islandCenter.z - distance;
-    
     if (Math.random() > 0.7) {
       createOliveTree(scene, physicsWorld, x, z, materials);
     } else {
@@ -538,11 +566,8 @@ function createBridgeConnection(scene, physicsWorld, groundMaterial, patchSize, 
   const roadWidth = 6;
   const bridgeDockLength = 10;
   
-  // Create a dock/pier that extends from the peninsula
   const dockGeometry = new THREE.BoxGeometry(roadWidth, 1, bridgeDockLength);
   const dockMesh = new THREE.Mesh(dockGeometry, materials.road);
-  
-  // Position at the end of the peninsula
   dockMesh.position.set(
     islandCenter.x,
     0.2,
@@ -550,7 +575,6 @@ function createBridgeConnection(scene, physicsWorld, groundMaterial, patchSize, 
   );
   scene.add(dockMesh);
   
-  // Add physics for the dock
   const dockShape = new CANNON.Box(new CANNON.Vec3(roadWidth / 2, 0.5, bridgeDockLength / 2));
   const dockBody = new CANNON.Body({
     mass: 0,
@@ -560,10 +584,9 @@ function createBridgeConnection(scene, physicsWorld, groundMaterial, patchSize, 
   dockBody.addShape(dockShape);
   physicsWorld.addBody(dockBody);
   
-  // Return the bridge connection point (at the end of the dock)
   return new THREE.Vector3(
     islandCenter.x,
-    1, // Slightly elevated for the bridge
+    1,
     islandCenter.z - patchSize * 0.5 - bridgeDockLength
   );
 }
@@ -571,71 +594,57 @@ function createBridgeConnection(scene, physicsWorld, groundMaterial, patchSize, 
 export function createBridgeBetweenNeighborhoods(scene, physicsWorld, groundMaterial, startPoint, endPoint, materials) {
   console.log('Creating bridge between:', startPoint, 'and', endPoint);
   
-  // Calculate bridge properties
   const bridgeDirection = new THREE.Vector3().subVectors(endPoint, startPoint).normalize();
   const bridgeLength = startPoint.distanceTo(endPoint);
   const bridgeWidth = 6;
-  const bridgeHeight = 30; // Height of towers
-  const segmentCount = Math.max(10, Math.floor(bridgeLength / 10)); // One segment per 10 units
+  const bridgeHeight = 30;
+  const segmentCount = Math.max(10, Math.floor(bridgeLength / 10));
   const segmentLength = bridgeLength / segmentCount;
   
-  // Create bridge center point
   const bridgeCenter = new THREE.Vector3().addVectors(startPoint, endPoint).multiplyScalar(0.5);
-  
-  // Create a group to hold all bridge elements
   const bridgeGroup = new THREE.Group();
   scene.add(bridgeGroup);
   
   const roadGeometry = new THREE.BoxGeometry(bridgeWidth, 1, bridgeLength);
   const roadMesh = new THREE.Mesh(roadGeometry, materials.bridgeRoad);
   roadMesh.position.copy(bridgeCenter);
-  roadMesh.position.y = 1; // Slight elevation
+  roadMesh.position.y = 1;
   roadMesh.lookAt(endPoint.x, 1, endPoint.z);
   bridgeGroup.add(roadMesh);
 
-  // Create physics body for the road deck
   const roadShape = new CANNON.Box(new CANNON.Vec3(bridgeWidth / 2, 0.5, bridgeLength / 2));
   const roadBody = new CANNON.Body({
     mass: 0,
     position: new CANNON.Vec3(bridgeCenter.x, bridgeCenter.y, bridgeCenter.z),
     material: groundMaterial
   });
-  // Align the road physics with the mesh orientation
   const quaternion = new THREE.Quaternion();
   roadMesh.getWorldQuaternion(quaternion);
   roadBody.quaternion.set(quaternion.x, quaternion.y, quaternion.z, quaternion.w);
   roadBody.addShape(roadShape);
   physicsWorld.addBody(roadBody);
 
-  // Create bridge towers
   const towerWidth = 2;
   const towerDepth = 2;
-  const towerDistance = bridgeLength * 0.25; // Tower at 1/4 and 3/4 of bridge length
-
+  const towerDistance = bridgeLength * 0.25;
   for (let i = -1; i <= 1; i += 2) {
-    // Skip middle tower
-    if (i === 0) continue;
-    
     const towerPosition = new THREE.Vector3().copy(bridgeCenter).addScaledVector(bridgeDirection, i * towerDistance);
-    towerPosition.y = 0; // At base level
+    towerPosition.y = 0;
     
-    // Create tower base
     const towerBaseGeometry = new THREE.BoxGeometry(towerWidth * 1.5, 2, towerDepth * 1.5);
     const towerBaseMesh = new THREE.Mesh(towerBaseGeometry, materials.bridge);
     towerBaseMesh.position.copy(towerPosition);
-    towerBaseMesh.position.y = 1; // Half the base height
+    towerBaseMesh.position.y = 1;
     bridgeGroup.add(towerBaseMesh);
     
-    // Create tower columns
     for (let j = -1; j <= 1; j += 2) {
       const columnGeometry = new THREE.BoxGeometry(towerWidth / 2, bridgeHeight, towerDepth / 2);
       const columnMesh = new THREE.Mesh(columnGeometry, materials.bridge);
       columnMesh.position.copy(towerPosition);
       columnMesh.position.x += j * towerWidth * 0.4;
-      columnMesh.position.y = bridgeHeight / 2 + 2; // Half height + base height
+      columnMesh.position.y = bridgeHeight / 2 + 2;
       bridgeGroup.add(columnMesh);
       
-      // Physics for tower column
       const columnShape = new CANNON.Box(new CANNON.Vec3(towerWidth / 4, bridgeHeight / 2, towerDepth / 4));
       const columnBody = new CANNON.Body({
         mass: 0,
@@ -644,7 +653,6 @@ export function createBridgeBetweenNeighborhoods(scene, physicsWorld, groundMate
       columnBody.addShape(columnShape);
       physicsWorld.addBody(columnBody);
       
-      // Create tower crossbeam at top
       if (j === -1) {
         const crossbeamGeometry = new THREE.BoxGeometry(towerWidth * 1.2, towerWidth / 2, towerDepth / 2);
         const crossbeamMesh = new THREE.Mesh(crossbeamGeometry, materials.bridge);
@@ -654,7 +662,6 @@ export function createBridgeBetweenNeighborhoods(scene, physicsWorld, groundMate
       }
     }
     
-    // Physics for tower base
     const towerBaseShape = new CANNON.Box(new CANNON.Vec3(towerWidth * 1.5 / 2, 1, towerDepth * 1.5 / 2));
     const towerBaseBody = new CANNON.Body({
       mass: 0,
@@ -664,48 +671,32 @@ export function createBridgeBetweenNeighborhoods(scene, physicsWorld, groundMate
     physicsWorld.addBody(towerBaseBody);
   }
 
-  // Create suspension cables
   const cableCount = 10;
-  const cableSpacing = bridgeLength / (cableCount + 1);
   const cableHeight = bridgeHeight * 0.9;
   const cableThickness = 0.1;
-
-  // Main suspension cables (horizontal)
   const mainCablePoints = [];
   for (let i = 0; i <= 40; i++) {
     const t = i / 40;
     const x = startPoint.x + (endPoint.x - startPoint.x) * t;
     const z = startPoint.z + (endPoint.z - startPoint.z) * t;
-    
-    // Create a parabolic cable curve with highest points at the towers
     let y;
-    const relativeDist = Math.abs((t - 0.5) * 2); // 0 at middle, 1 at ends
+    const relativeDist = Math.abs((t - 0.5) * 2);
     if (relativeDist <= 0.5) {
-      // Between towers - parabolic curve
       y = cableHeight * (1 - Math.pow(relativeDist * 2, 2)) + 2;
     } else {
-      // Outside towers - linear decrease
       y = cableHeight * (1 - Math.pow(0.5 * 2, 2)) + 2 - (relativeDist - 0.5) * 4;
     }
-    
     mainCablePoints.push(new THREE.Vector3(x, y, z));
   }
-
-  // Create the main suspension cables
   const mainCableCurve = new THREE.CatmullRomCurve3(mainCablePoints);
   const mainCableGeometry = new THREE.TubeGeometry(mainCableCurve, 50, cableThickness, 8, false);
   const mainCableMesh = new THREE.Mesh(mainCableGeometry, materials.bridgeCable);
   bridgeGroup.add(mainCableMesh);
 
-  // Create the vertical suspension cables
   for (let i = 1; i <= cableCount; i++) {
     const t = i / (cableCount + 1);
     const cablePosition = new THREE.Vector3().copy(startPoint).lerp(endPoint, t);
-    
-    // Get height at this position from the main cable curve
     const mainCableHeight = mainCableCurve.getPointAt(t).y;
-    
-    // Create vertical cable
     const verticalCableGeometry = new THREE.CylinderGeometry(cableThickness / 2, cableThickness / 2, mainCableHeight - 1, 8);
     const verticalCableMesh = new THREE.Mesh(verticalCableGeometry, materials.bridgeCable);
     verticalCableMesh.position.copy(cablePosition);
@@ -713,7 +704,6 @@ export function createBridgeBetweenNeighborhoods(scene, physicsWorld, groundMate
     bridgeGroup.add(verticalCableMesh);
   }
 
-  // Add bridge railings
   const railingHeight = 1.2;
   for (let side = -1; side <= 1; side += 2) {
     const railingGeometry = new THREE.BoxGeometry(0.2, railingHeight, bridgeLength);
@@ -724,17 +714,13 @@ export function createBridgeBetweenNeighborhoods(scene, physicsWorld, groundMate
     railingMesh.lookAt(endPoint.x, 1 + railingHeight / 2, endPoint.z);
     bridgeGroup.add(railingMesh);
     
-    // Add posts at regular intervals
     const postCount = Math.floor(bridgeLength / 5);
     for (let i = 0; i <= postCount; i++) {
       const t = i / postCount;
       const postPosition = new THREE.Vector3().copy(startPoint).lerp(endPoint, t);
       postPosition.y = 1;
-      
-      // Adjust x position based on side
       const direction = new THREE.Vector3().copy(bridgeDirection).cross(new THREE.Vector3(0, 1, 0));
       postPosition.add(direction.multiplyScalar(side * (bridgeWidth / 2 - 0.1)));
-      
       const postGeometry = new THREE.BoxGeometry(0.2, railingHeight, 0.2);
       const postMesh = new THREE.Mesh(postGeometry, materials.bridgeCable);
       postMesh.position.copy(postPosition);
@@ -743,7 +729,6 @@ export function createBridgeBetweenNeighborhoods(scene, physicsWorld, groundMate
     }
   }
 
-  // Return the bridge for reference
   return {
     group: bridgeGroup,
     startPoint: startPoint,
@@ -754,20 +739,17 @@ export function createBridgeBetweenNeighborhoods(scene, physicsWorld, groundMate
 export function createFloatingBridgeBetweenNeighborhoods(scene, physicsWorld, groundMaterial, startPoint, endPoint, materials) {
   console.log('Creating floating bridge between:', startPoint, 'and', endPoint);
 
-  // Calculate bridge properties
   const bridgeDirection = new THREE.Vector3().subVectors(endPoint, startPoint).normalize();
   const bridgeLength = startPoint.distanceTo(endPoint);
   const bridgeWidth = 6;
   const bridgeCenter = new THREE.Vector3().addVectors(startPoint, endPoint).multiplyScalar(0.5);
-  const seaLevel = -1.5; // Match the water level from createTerrainWithWater
+  const seaLevel = -1.5;
 
-  // Create a group for all bridge elements
   const bridgeGroup = new THREE.Group();
   scene.add(bridgeGroup);
 
   // --- Floating Pontoons ---
-  const pontoonCount = Math.max(3, Math.floor(bridgeLength / 20)); // One pontoon every 20 units, min 3
-  const pontoonSpacing = bridgeLength / (pontoonCount - 1);
+  const pontoonCount = Math.max(3, Math.floor(bridgeLength / 20));
   const pontoonWidth = bridgeWidth * 1.5;
   const pontoonLength = 10;
   const pontoonHeight = 2;
@@ -777,44 +759,41 @@ export function createFloatingBridgeBetweenNeighborhoods(scene, physicsWorld, gr
   for (let i = 0; i < pontoonCount; i++) {
     const t = i / (pontoonCount - 1);
     const pontoonPosition = new THREE.Vector3().lerpVectors(startPoint, endPoint, t);
-    pontoonPosition.y = seaLevel + pontoonHeight / 2; // Float on water surface
-
+    pontoonPosition.y = seaLevel + pontoonHeight / 2;
+    
     const pontoonMesh = new THREE.Mesh(pontoonGeometry, materials.whitewash);
     pontoonMesh.position.copy(pontoonPosition);
     pontoonMesh.lookAt(endPoint.x, pontoonPosition.y, endPoint.z);
     bridgeGroup.add(pontoonMesh);
-
-    // Add terracotta trim for Mediterranean style
+    
     const trimGeometry = new THREE.BoxGeometry(pontoonWidth + 0.2, 0.2, pontoonLength + 0.2);
     const trimMesh = new THREE.Mesh(trimGeometry, materials.terracotta);
     trimMesh.position.copy(pontoonPosition);
     trimMesh.position.y += pontoonHeight / 2;
     trimMesh.lookAt(endPoint.x, pontoonPosition.y, endPoint.z);
     bridgeGroup.add(trimMesh);
-
-    // Physics: buoyant pontoon (static, but with slight bobbing)
+    
     const pontoonShape = new CANNON.Box(new CANNON.Vec3(pontoonWidth / 2, pontoonHeight / 2, pontoonLength / 2));
     const pontoonBody = new CANNON.Body({
-      mass: 0, // Static for simplicity
+      mass: 0,
       position: new CANNON.Vec3(pontoonPosition.x, pontoonPosition.y, pontoonPosition.z),
       material: groundMaterial
     });
     pontoonBody.quaternion.setFromEuler(0, Math.atan2(bridgeDirection.z, bridgeDirection.x), 0);
     pontoonBody.addShape(pontoonShape);
     physicsWorld.addBody(pontoonBody);
-
+    
     pontoons.push({ mesh: pontoonMesh, body: pontoonBody, position: pontoonPosition });
   }
-
+  
   // --- Road Deck ---
   const roadGeometry = new THREE.BoxGeometry(bridgeWidth, 0.5, bridgeLength);
   const roadMesh = new THREE.Mesh(roadGeometry, materials.bridgeRoad);
   roadMesh.position.copy(bridgeCenter);
-  roadMesh.position.y = seaLevel + pontoonHeight + 0.25; // Just above pontoons
+  roadMesh.position.y = seaLevel + pontoonHeight + 0.25;
   roadMesh.lookAt(endPoint.x, roadMesh.position.y, endPoint.z);
   bridgeGroup.add(roadMesh);
-
-  // Physics for road deck (split into segments for realism)
+  
   const segmentCount = pontoonCount - 1;
   const segmentLength = bridgeLength / segmentCount;
   const roadSegments = [];
@@ -822,7 +801,7 @@ export function createFloatingBridgeBetweenNeighborhoods(scene, physicsWorld, gr
     const t = (i + 0.5) / segmentCount;
     const segmentPosition = new THREE.Vector3().lerpVectors(startPoint, endPoint, t);
     segmentPosition.y = roadMesh.position.y;
-
+    
     const roadShape = new CANNON.Box(new CANNON.Vec3(bridgeWidth / 2, 0.25, segmentLength / 2));
     const roadBody = new CANNON.Body({
       mass: 0,
@@ -834,24 +813,22 @@ export function createFloatingBridgeBetweenNeighborhoods(scene, physicsWorld, gr
     physicsWorld.addBody(roadBody);
     roadSegments.push(roadBody);
   }
-
+  
   // --- Suspension Cables ---
   const cableThickness = 0.1;
-  const cableHeightAbove = 10; // Height of cables above road
+  const cableHeightAbove = 10;
   const mainCablePoints = [];
-  pontoons.forEach((pontoon, i) => {
+  pontoons.forEach((pontoon) => {
     const cablePoint = pontoon.position.clone();
     cablePoint.y += pontoonHeight / 2 + cableHeightAbove;
     mainCablePoints.push(cablePoint);
   });
-
   const mainCableCurve = new THREE.CatmullRomCurve3(mainCablePoints);
   const mainCableGeometry = new THREE.TubeGeometry(mainCableCurve, 50, cableThickness, 8, false);
   const mainCableMesh = new THREE.Mesh(mainCableGeometry, materials.bridgeCable);
   bridgeGroup.add(mainCableMesh);
-
-  // Vertical cables from pontoons to road
-  pontoons.forEach((pontoon, i) => {
+  
+  pontoons.forEach((pontoon) => {
     const roadPoint = pontoon.position.clone();
     roadPoint.y = roadMesh.position.y;
     const cableGeometry = new THREE.CylinderGeometry(cableThickness / 2, cableThickness / 2, cableHeightAbove, 8);
@@ -860,24 +837,22 @@ export function createFloatingBridgeBetweenNeighborhoods(scene, physicsWorld, gr
     cableMesh.position.y += pontoonHeight / 2 + cableHeightAbove / 2;
     bridgeGroup.add(cableMesh);
   });
-
+  
   // --- Decorative Lanterns ---
   const lanternCount = pontoonCount * 2;
   for (let i = 0; i < lanternCount; i++) {
     const t = i / (lanternCount - 1);
     const basePosition = new THREE.Vector3().lerpVectors(startPoint, endPoint, t);
     basePosition.y = roadMesh.position.y;
-
     for (let side = -1; side <= 1; side += 2) {
       const lanternPos = basePosition.clone();
       lanternPos.add(bridgeDirection.clone().cross(new THREE.Vector3(0, 1, 0)).multiplyScalar(side * bridgeWidth / 2));
-      
       const lanternGeometry = new THREE.SphereGeometry(0.3, 8, 8);
       const lanternMesh = new THREE.Mesh(lanternGeometry, new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xffff00 }));
       lanternMesh.position.copy(lanternPos);
       lanternMesh.position.y += 0.5;
       bridgeGroup.add(lanternMesh);
-
+      
       const poleGeometry = new THREE.CylinderGeometry(0.1, 0.1, 1, 8);
       const poleMesh = new THREE.Mesh(poleGeometry, materials.bridgeCable);
       poleMesh.position.copy(lanternPos);
@@ -885,11 +860,7 @@ export function createFloatingBridgeBetweenNeighborhoods(scene, physicsWorld, gr
       bridgeGroup.add(poleMesh);
     }
   }
-
-  // --- Water Hazard ---
-  // The existing water body from createTerrainWithWater will handle machinery falling in
-  // No additional physics needed here; machinery will sink due to collision with waterBody
-
+  
   return {
     group: bridgeGroup,
     startPoint: startPoint,
@@ -899,13 +870,12 @@ export function createFloatingBridgeBetweenNeighborhoods(scene, physicsWorld, gr
   };
 }
 
-// Optional utility function to connect two villages with the floating bridge
+// =====================================================
+// OPTIONAL: Connect Two Villages With a Floating Bridge
+// =====================================================
 export function connectTwoVillagesWithFloatingBridge(scene, physicsWorld, groundMaterial, materials) {
-  // Create two villages
   const village1 = createMediterraneanVillage(scene, physicsWorld, groundMaterial, () => 0, 100, new THREE.Vector3(0, 0, 0));
   const village2 = createMediterraneanVillage(scene, physicsWorld, groundMaterial, () => 0, 100, new THREE.Vector3(200, 0, 0));
-
-  // Create the floating bridge between them
   const bridge = createFloatingBridgeBetweenNeighborhoods(
     scene,
     physicsWorld,
@@ -914,6 +884,5 @@ export function connectTwoVillagesWithFloatingBridge(scene, physicsWorld, ground
     village2.bridgeConnectionPoint,
     materials
   );
-
   return { village1, village2, bridge };
 }
